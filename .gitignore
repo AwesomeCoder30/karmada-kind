@@ -1,0 +1,11 @@
+# Generated state
+.state/
+results/
+
+# macOS
+.DS_Store
+
+# Keep the upstream clone as a nested repo dependency
+# but don't try to vendor its internals into the top-level reproducibility repo
+karmada/_output/
+karmada/.cache/
