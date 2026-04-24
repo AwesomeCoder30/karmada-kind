@@ -1,0 +1,22 @@
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: default-pod-job-policy
+  namespace: default
+spec:
+  resourceSelectors:
+    - apiVersion: v1
+      kind: Pod
+      labelSelector:
+        matchLabels:
+          propagate: "true"
+    - apiVersion: batch/v1
+      kind: Job
+      labelSelector:
+        matchLabels:
+          propagate: "true"
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - member1
+        - member2

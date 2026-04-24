@@ -3,20 +3,40 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR="${ROOT_DIR}/.state"
-KUBECONFIG_DIR="${STATE_DIR}/kubeconfig"
+ARTIFACTS_DIR="${ROOT_DIR}/artifacts"
+PROJECT_CLUSTERS=(karmada-host member1 member2)
+CLEAN_KARMADA_SOURCE="${CLEAN_KARMADA_SOURCE:-false}"
 
-clusters=(karmada-host member1 member2)
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }
+}
 
-for cluster in "${clusters[@]}"; do
+need_cmd kind
+
+for cluster in "${PROJECT_CLUSTERS[@]}"; do
   if kind get clusters 2>/dev/null | grep -qx "${cluster}"; then
     echo "Deleting kind cluster: ${cluster}"
     kind delete cluster --name "${cluster}"
+  else
+    echo "Cluster not present: ${cluster}"
   fi
 done
 
-mkdir -p "${STATE_DIR}"
-rm -rf "${KUBECONFIG_DIR}"
+rm -rf "${STATE_DIR}"
+mkdir -p "${ARTIFACTS_DIR}"
 
-echo
-echo "Remaining kind clusters:"
+if [[ "${CLEAN_KARMADA_SOURCE}" == "true" ]]; then
+  echo "Removing fetched upstream source checkout: ${ROOT_DIR}/karmada"
+  rm -rf "${ROOT_DIR}/karmada"
+fi
+
+cat <<EOF
+
+Cleanup complete.
+- Removed generated state under: ${STATE_DIR}
+- Preserved proof artifacts under: ${ARTIFACTS_DIR}
+- Preserved fetched Karmada source checkout (set CLEAN_KARMADA_SOURCE=true to remove it)
+
+Remaining kind clusters:
+EOF
 kind get clusters || true
