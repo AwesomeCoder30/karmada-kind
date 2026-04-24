@@ -5,7 +5,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 KARMADA_REPO="${ROOT_DIR}/karmada"
 KARMADA_REPO_URL="${KARMADA_REPO_URL:-https://github.com/karmada-io/karmada.git}"
 KARMADA_REF="${KARMADA_REF:-3424bc71d1bd6662b7bf7d5ed7510f075d5eff9f}"
-PATCHES_DIR="${ROOT_DIR}/patches"
+PATCHES_DIR="${ROOT_DIR}/patches/upstream"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {

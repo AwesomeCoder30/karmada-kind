@@ -40,6 +40,8 @@ test -x ./scripts/capture-artifacts.sh && echo ok
 test -f ./configs/kind/host-4nodes.yaml && echo ok
 test -f ./configs/kind/member1-4nodes.yaml && echo ok
 test -f ./configs/kind/member2-4nodes.yaml && echo ok
+test -f ./docs/RUNBOOK.md && echo ok
+test -f ./examples/manifests/hello-world.yaml && echo ok
 ```
 
 ## 4. Clean previous state
@@ -185,10 +187,10 @@ Expected outputs:
 
 ## 10. Example workload files
 
-- `hello-world.yaml`
-- `deployment.yaml`
-- `propagation-policy.yaml`
-- `karmada-host.yaml`
+- `examples/manifests/hello-world.yaml`
+- `examples/manifests/deployment.yaml`
+- `examples/manifests/propagation-policy.yaml`
+- `examples/manifests/karmada-host.yaml`
 
 Use these as starting points once the control plane and member clusters are healthy.
 

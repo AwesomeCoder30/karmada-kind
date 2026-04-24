@@ -24,13 +24,20 @@ Total: `3 clusters / 12 kind node containers`
 ## What is in this repo
 
 - `configs/kind/` — checked-in kind cluster configs
-- `scripts/bootstrap-karmada.sh` — full environment bootstrap
-- `scripts/ensure-karmada-repo.sh` — fetches pinned upstream Karmada source
-- `scripts/status.sh` — one-command status summary
-- `scripts/capture-artifacts.sh` — writes proof artifacts and tarball
-- `scripts/cleanup.sh` — tears down project clusters and generated local state
-- `RUNBOOK.md` — detailed step-by-step instructions
-- `deployment.yaml`, `hello-world.yaml`, `propagation-policy.yaml` — example workload and propagation manifests
+- `scripts/` — bootstrap, cleanup, status, artifact capture, and upstream fetch helpers
+- `docs/RUNBOOK.md` — detailed step-by-step instructions
+- `examples/manifests/` — example workload and propagation manifests
+- `patches/upstream/` — local patches applied to the fetched upstream Karmada checkout
+
+## Repository layout
+
+```text
+configs/kind/          kind topology inputs
+docs/                  operator-facing documentation
+examples/manifests/    sample workloads and propagation policies
+patches/upstream/      reproducibility patches applied to upstream Karmada
+scripts/               bootstrap and maintenance scripts
+```
 
 ## Reproducibility model
 
@@ -111,6 +118,8 @@ kubectl --kubeconfig ./.state/kubeconfig/karmada.config --context karmada-apiser
 docker ps --format '{{.Names}}' | grep -E '^(karmada-host|member1|member2)-(control-plane|worker|worker2|worker3)$' | wc -l
 ./scripts/capture-artifacts.sh
 ```
+
+Example manifests live under `examples/manifests/`.
 
 ## Cleanup
 
