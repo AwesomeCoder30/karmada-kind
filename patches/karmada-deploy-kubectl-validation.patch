@@ -1,0 +1,126 @@
+diff --git a/hack/deploy-karmada.sh b/hack/deploy-karmada.sh
+index 2e485a70c..018713e74 100755
+--- a/hack/deploy-karmada.sh
++++ b/hack/deploy-karmada.sh
+@@ -27,6 +27,9 @@ CERT_DIR=${CERT_DIR:-"${HOME}/.karmada"}
+ mkdir -p "${CERT_DIR}" &>/dev/null ||  mkdir -p "${CERT_DIR}"
+ rm -f "${CERT_DIR}/*" &>/dev/null ||  rm -f "${CERT_DIR}/*"
+ KARMADA_APISERVER_SECURE_PORT=${KARMADA_APISERVER_SECURE_PORT:-5443}
++KARMADA_APISERVER_PROXY_PORT=${KARMADA_APISERVER_PROXY_PORT:-32443}
++KARMADA_APISERVER_PROXY_PID_FILE=${KARMADA_APISERVER_PROXY_PID_FILE:-"${CERT_DIR}/karmada-apiserver-port-forward.pid"}
++KARMADA_APISERVER_PROXY_LOG_FILE=${KARMADA_APISERVER_PROXY_LOG_FILE:-"${CERT_DIR}/karmada-apiserver-port-forward.log"}
+ 
+ # The host cluster name which used to install karmada control plane components.
+ HOST_CLUSTER_NAME=${HOST_CLUSTER_NAME:-"karmada-host"}
+@@ -183,11 +186,53 @@ function installCRDs() {
+     local context_name=$1
+     local crd_path=$2
+ 
++    if [[ "${context_name}" == "karmada-apiserver" ]]; then
++      kubectl --context="${context_name}" apply --validate=false -f "${REPO_ROOT}/artifacts/deploy/namespace.yaml"
++      kubectl --context="${context_name}" apply --validate=false -k "${crd_path}"/_crds
++      return
++    fi
++
+     kubectl --context="${context_name}" apply -f "${REPO_ROOT}/artifacts/deploy/namespace.yaml"
+ 
+     kubectl --context="${context_name}" apply -k "${crd_path}"/_crds
+ }
+ 
++function kubectl_karmada_apiserver_apply() {
++  kubectl --context="karmada-apiserver" apply --validate=false "$@"
++}
++
++function start_karmada_apiserver_proxy() {
++  if [[ -f "${KARMADA_APISERVER_PROXY_PID_FILE}" ]]; then
++    existing_pid=$(cat "${KARMADA_APISERVER_PROXY_PID_FILE}" 2>/dev/null || true)
++    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
++      kill "${existing_pid}" 2>/dev/null || true
++      sleep 1
++    fi
++  fi
++
++  rm -f "${KARMADA_APISERVER_PROXY_LOG_FILE}"
++  kubectl --context="${HOST_CLUSTER_NAME}" -n "${KARMADA_SYSTEM_NAMESPACE}" \
++    port-forward service/karmada-apiserver "${KARMADA_APISERVER_PROXY_PORT}:5443" \
++    >"${KARMADA_APISERVER_PROXY_LOG_FILE}" 2>&1 &
++
++  local proxy_pid=$!
++  echo "${proxy_pid}" > "${KARMADA_APISERVER_PROXY_PID_FILE}"
++
++  for _ in {1..30}; do
++    if grep -q "Forwarding from 127.0.0.1:${KARMADA_APISERVER_PROXY_PORT}" "${KARMADA_APISERVER_PROXY_LOG_FILE}" 2>/dev/null; then
++      return 0
++    fi
++    if ! kill -0 "${proxy_pid}" 2>/dev/null; then
++      cat "${KARMADA_APISERVER_PROXY_LOG_FILE}" >&2 || true
++      return 1
++    fi
++    sleep 1
++  done
++
++  cat "${KARMADA_APISERVER_PROXY_LOG_FILE}" >&2 || true
++  return 1
++}
++
+ function deploy_karmada_component() {
+   local component_name=$1
+   local temp_dir=$2
+@@ -364,6 +409,17 @@ kubectl --context="${HOST_CLUSTER_NAME}" apply -f "${TEMP_PATH_APISERVER}"/karma
+ # Wait for karmada-apiserver to come up before launching the rest of the components.
+ util::wait_pod_ready "${HOST_CLUSTER_NAME}" "${APISERVER_POD_LABEL}" "${KARMADA_SYSTEM_NAMESPACE}"
+ 
++if [ "${HOST_CLUSTER_TYPE}" = "local" ]; then
++  if start_karmada_apiserver_proxy; then
++    KARMADA_APISERVER_IP="127.0.0.1"
++    KARMADA_APISERVER_SECURE_PORT="${KARMADA_APISERVER_PROXY_PORT}"
++  else
++    echo -e "\nERROR: failed to start local port-forward for karmada-apiserver on 127.0.0.1:${KARMADA_APISERVER_PROXY_PORT}"
++    recover_kubeconfig
++    exit 1
++  fi
++fi
++
+ # get Karmada apiserver IP at remote mode
+ if [ "${HOST_CLUSTER_TYPE}" = "remote" ]; then
+   case $KARMADA_APISERVER_SERVICE_TYPE in
+@@ -439,25 +495,25 @@ util::fill_cabundle "${ROOT_CA_FILE}" "${TEMP_PATH_APISERVICE}"/karmada-search-a
+ util::deploy_webhook_configuration "karmada-apiserver" "${ROOT_CA_FILE}" "${REPO_ROOT}/artifacts/deploy/webhook-configuration.yaml"
+ 
+ # deploy APIService on karmada apiserver for karmada-aggregated-apiserver
+-kubectl --context="karmada-apiserver" apply -f "${TEMP_PATH_APISERVICE}"/karmada-aggregated-apiserver-apiservice.yaml
++kubectl_karmada_apiserver_apply -f "${TEMP_PATH_APISERVICE}"/karmada-aggregated-apiserver-apiservice.yaml
+ # make sure apiservice for v1alpha1.cluster.karmada.io is Available
+ util::wait_apiservice_ready "karmada-apiserver" "${KARMADA_AGGREGATION_APISERVER_LABEL}"
+ 
+ # deploy APIService on karmada apiserver for karmada-search
+-kubectl --context="karmada-apiserver" apply -f "${TEMP_PATH_APISERVICE}"/karmada-search-apiservice.yaml
++kubectl_karmada_apiserver_apply -f "${TEMP_PATH_APISERVICE}"/karmada-search-apiservice.yaml
+ # make sure apiservice for v1alpha1.search.karmada.io is Available
+ util::wait_apiservice_ready "karmada-apiserver" "${KARMADA_SEARCH_LABEL}"
+ 
+ # deploy APIService on karmada apiserver for karmada-metrics-adapter
+-kubectl --context="karmada-apiserver" apply -f "${TEMP_PATH_APISERVICE}"/karmada-metrics-adapter-apiservice.yaml
++kubectl_karmada_apiserver_apply -f "${TEMP_PATH_APISERVICE}"/karmada-metrics-adapter-apiservice.yaml
+ # make sure apiservice for karmada metrics adapter is Available
+ util::wait_apiservice_ready "karmada-apiserver" "${KARMADA_METRICS_ADAPTER_LABEL}"
+ 
+ # grant the admin clusterrole read and write permissions for Karmada resources
+-kubectl --context="karmada-apiserver" apply -f "${REPO_ROOT}/artifacts/deploy/admin-clusterrole-aggregation.yaml"
++kubectl_karmada_apiserver_apply -f "${REPO_ROOT}/artifacts/deploy/admin-clusterrole-aggregation.yaml"
+ 
+ # deploy cluster proxy rbac for admin
+-kubectl --context="karmada-apiserver" apply -f "${REPO_ROOT}/artifacts/deploy/cluster-proxy-admin-rbac.yaml"
++kubectl_karmada_apiserver_apply -f "${REPO_ROOT}/artifacts/deploy/cluster-proxy-admin-rbac.yaml"
+ 
+ # deploy bootstrap token configuration for registering member clusters with PULL mode
+ karmada_ca=$(base64 < "${ROOT_CA_FILE}" | tr -d '\r\n')
+@@ -467,7 +523,7 @@ trap '{ rm -rf ${TEMP_PATH_BOOTSTRAP}; }' EXIT
+ cp -rf "${REPO_ROOT}"/artifacts/deploy/bootstrap-token-configuration.yaml "${TEMP_PATH_BOOTSTRAP}"/bootstrap-token-configuration-tmp.yaml
+ sed -i'' -e "s/{{ca_crt}}/${karmada_ca}/g" "${TEMP_PATH_BOOTSTRAP}"/bootstrap-token-configuration-tmp.yaml
+ sed -i'' -e "s|{{apiserver_address}}|${karmada_apiserver_address}|g" "${TEMP_PATH_BOOTSTRAP}"/bootstrap-token-configuration-tmp.yaml
+-kubectl --context="karmada-apiserver" apply -f "${TEMP_PATH_BOOTSTRAP}"/bootstrap-token-configuration-tmp.yaml
++kubectl_karmada_apiserver_apply -f "${TEMP_PATH_BOOTSTRAP}"/bootstrap-token-configuration-tmp.yaml
+ 
+ deploy_karmada_component "karmada-controller-manager" "${TEMP_PATH_BOOTSTRAP}" "${KARMADA_CONTROLLER_LABEL}"
+ deploy_karmada_component "karmada-scheduler" "${TEMP_PATH_BOOTSTRAP}" "${KARMADA_SCHEDULER_LABEL}"

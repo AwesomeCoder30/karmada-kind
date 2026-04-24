@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR="${ROOT_DIR}/.state"
 ARTIFACTS_DIR="${ROOT_DIR}/artifacts"
+KARMADA_APISERVER_PROXY_PID_FILE="${STATE_DIR}/karmada-apiserver-port-forward.pid"
 PROJECT_CLUSTERS=(karmada-host member1 member2)
 CLEAN_KARMADA_SOURCE="${CLEAN_KARMADA_SOURCE:-false}"
 
@@ -12,6 +13,14 @@ need_cmd() {
 }
 
 need_cmd kind
+
+if [[ -f "${KARMADA_APISERVER_PROXY_PID_FILE}" ]]; then
+  proxy_pid=$(cat "${KARMADA_APISERVER_PROXY_PID_FILE}" 2>/dev/null || true)
+  if [[ -n "${proxy_pid}" ]] && kill -0 "${proxy_pid}" 2>/dev/null; then
+    echo "Stopping local karmada-apiserver port-forward: ${proxy_pid}"
+    kill "${proxy_pid}" 2>/dev/null || true
+  fi
+fi
 
 for cluster in "${PROJECT_CLUSTERS[@]}"; do
   if kind get clusters 2>/dev/null | grep -qx "${cluster}"; then

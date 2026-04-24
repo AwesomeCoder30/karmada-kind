@@ -10,6 +10,9 @@ MEMBER1_KUBECONFIG="${KUBECONFIG_DIR}/member1.config"
 MEMBER2_KUBECONFIG="${KUBECONFIG_DIR}/member2.config"
 MEMBERS_KUBECONFIG="${KUBECONFIG_DIR}/members.config"
 LOG_DIR="${STATE_DIR}/logs"
+KARMADA_APISERVER_PROXY_PID_FILE="${STATE_DIR}/karmada-apiserver-port-forward.pid"
+KARMADA_APISERVER_PROXY_LOG_FILE="${LOG_DIR}/karmada-apiserver-port-forward.log"
+KARMADA_APISERVER_PROXY_PORT="${KARMADA_APISERVER_PROXY_PORT:-32443}"
 
 HOST_CLUSTER_NAME="karmada-host"
 MEMBER1_CLUSTER_NAME="member1"
@@ -23,6 +26,7 @@ BUILD_IMAGES="${BUILD_IMAGES:-true}"
 KARMADA_APISERVER_VERSION="${KARMADA_APISERVER_VERSION:-v1.35.0}"
 KARMADA_REPO_URL="${KARMADA_REPO_URL:-https://github.com/karmada-io/karmada.git}"
 KARMADA_REF="${KARMADA_REF:-3424bc71d1bd6662b7bf7d5ed7510f075d5eff9f}"
+ALLOW_OTHER_KIND_CLUSTERS="${ALLOW_OTHER_KIND_CLUSTERS:-false}"
 HOST_IPADDRESS="${HOST_IPADDRESS:-}"
 
 need_cmd() {
@@ -57,6 +61,12 @@ ensure_karmada_repo() {
 preflight_checks() {
   if kind get clusters 2>/dev/null | grep -Eq '^(karmada-host|member1|member2)$'; then
     warn "Existing project kind clusters detected. A clean rebuild will delete and recreate them."
+  fi
+
+  local other_clusters
+  other_clusters=$(kind get clusters 2>/dev/null | grep -Ev '^(karmada-host|member1|member2)$' || true)
+  if [[ -n "${other_clusters}" ]] && [[ "${ALLOW_OTHER_KIND_CLUSTERS}" != "true" ]]; then
+    fail "Found unrelated kind clusters already running:\n${other_clusters}\nDelete them or rerun with ALLOW_OTHER_KIND_CLUSTERS=true if you want to risk resource contention."
   fi
 
   if [[ -f "${HOME}/.kube/config" ]]; then
@@ -172,13 +182,27 @@ build_and_load_images() {
 
   local registry="docker.io/karmada"
   local version="latest"
+  local build_platform="linux/arm64"
+  local build_targets=(
+    "karmada-controller-manager"
+    "karmada-scheduler"
+    "karmada-descheduler"
+    "karmada-webhook"
+    "karmada-scheduler-estimator"
+    "karmada-aggregated-apiserver"
+    "karmada-search"
+    "karmada-metrics-adapter"
+  )
 
-  echo "Building Karmada images from source"
+  echo "Building required Karmada images from source"
   (
     cd "${KARMADA_REPO}"
-    export VERSION="${version}"
-    export REGISTRY="${registry}"
-    make images GOOS=linux
+    local target
+    for target in "${build_targets[@]}"; do
+      echo "Building image target: ${target}"
+      make "${target}" GOOS=linux
+      VERSION="${version}" REGISTRY="${registry}" BUILD_PLATFORMS="${build_platform}" hack/docker.sh "${target}"
+    done
   )
 
   local host_images=(
@@ -251,18 +275,11 @@ deploy_karmada() {
     export MEMBER_CLUSTER_1_NAME="${MEMBER1_CLUSTER_NAME}"
     export MEMBER_CLUSTER_2_NAME="${MEMBER2_CLUSTER_NAME}"
     export KARMADA_APISERVER_VERSION
-
-    local deploy_attempt
-    for deploy_attempt in 1 2 3; do
-      if ./hack/deploy-karmada.sh "${HOST_KUBECONFIG}" "${HOST_CLUSTER_NAME}"; then
-        break
-      fi
-      if [[ "${deploy_attempt}" -eq 3 ]]; then
-        fail "Karmada deploy failed after ${deploy_attempt} attempts"
-      fi
-      warn "Karmada deploy attempt ${deploy_attempt} failed; waiting for control-plane pods to settle before retrying..."
-      sleep 20
-    done
+    export KARMADA_APISERVER_PROXY_PID_FILE
+    export KARMADA_APISERVER_PROXY_LOG_FILE
+    export KARMADA_APISERVER_PROXY_PORT
+    ./hack/deploy-karmada.sh "${HOST_KUBECONFIG}" "${HOST_CLUSTER_NAME}" \
+      || fail "Karmada deploy failed. The deploy script rotates cert material, so in-place retries are intentionally disabled."
 
     local karmadactl_bin="${STATE_DIR}/bin/karmadactl"
     mkdir -p "${STATE_DIR}/bin"
