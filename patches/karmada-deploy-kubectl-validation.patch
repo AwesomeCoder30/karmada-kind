@@ -41,9 +41,9 @@ index 2e485a70c..018713e74 100755
 +  fi
 +
 +  rm -f "${KARMADA_APISERVER_PROXY_LOG_FILE}"
-+  kubectl --context="${HOST_CLUSTER_NAME}" -n "${KARMADA_SYSTEM_NAMESPACE}" \
++  nohup kubectl --context="${HOST_CLUSTER_NAME}" -n "${KARMADA_SYSTEM_NAMESPACE}" \
 +    port-forward service/karmada-apiserver "${KARMADA_APISERVER_PROXY_PORT}:5443" \
-+    >"${KARMADA_APISERVER_PROXY_LOG_FILE}" 2>&1 &
++    >"${KARMADA_APISERVER_PROXY_LOG_FILE}" 2>&1 </dev/null &
 +
 +  local proxy_pid=$!
 +  echo "${proxy_pid}" > "${KARMADA_APISERVER_PROXY_PID_FILE}"
